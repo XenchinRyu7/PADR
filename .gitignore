@@ -1,0 +1,23 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+
+# Test artifacts
+*.out
+*.test
+coverage.html
+
+# Local state & caches
+.padr/
+tmp/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
