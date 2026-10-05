@@ -34,7 +34,7 @@ func RunDashboard() {
 	a.SetIcon(icon)
 
 	w := a.NewWindow("PADR — Autonomous Development Runner")
-	w.Resize(fyne.NewSize(1020, 720))
+	w.Resize(fyne.NewSize(1040, 720))
 	w.SetIcon(icon)
 
 	_ = config.InitPadrHome()
@@ -54,13 +54,15 @@ func RunDashboard() {
 	tabSchedule := buildScheduleTab(w, globalCfg, dbStore, orch)
 	tabRepos := buildReposTab(w)
 	tabProviders := buildProvidersTab(w, globalCfg)
+	tabEngine := buildEngineTab(w)
 	tabGitHub := buildGitHubTab(w)
 	tabLogs := buildLogsTab(w, dbStore)
 
 	tabs := container.NewAppTabs(
 		container.NewTabItemWithIcon("Runner", theme.MediaPlayIcon(), tabSchedule),
 		container.NewTabItemWithIcon("Repositories", theme.FolderIcon(), tabRepos),
-		container.NewTabItemWithIcon("Providers & Engine", theme.SettingsIcon(), tabProviders),
+		container.NewTabItemWithIcon("Providers", theme.StorageIcon(), tabProviders),
+		container.NewTabItemWithIcon("Engine", theme.SettingsIcon(), tabEngine),
 		container.NewTabItemWithIcon("Account", theme.AccountIcon(), tabGitHub),
 		container.NewTabItemWithIcon("Logs", theme.DocumentIcon(), tabLogs),
 	)
@@ -73,30 +75,6 @@ func RunDashboard() {
 			fyne.NewMenuItem("Open Dashboard", func() {
 				w.Show()
 				w.RequestFocus()
-			}),
-			fyne.NewMenuItem("Run Autonomous Tasks", func() {
-				go func() {
-					projects, _ := config.ListProjects()
-					for _, p := range projects {
-						_, _ = orch.RunProject(context.Background(), p, runner.RunOptions{})
-					}
-				}()
-			}),
-			fyne.NewMenuItem("Settings & Providers", func() {
-				w.Show()
-				w.RequestFocus()
-				tabs.SelectIndex(2)
-			}),
-			fyne.NewMenuItemSeparator(),
-			fyne.NewMenuItem("Setup Wizard...", func() {
-				ShowSetupWizard(w, func() {
-					w.Show()
-				})
-			}),
-			fyne.NewMenuItem("Create Desktop Shortcut", func() {
-				if err := CreateDesktopShortcut(); err == nil {
-					dialog.ShowInformation("Shortcut Created", "PADR shortcut placed on your Desktop.", w)
-				}
 			}),
 			fyne.NewMenuItemSeparator(),
 			fyne.NewMenuItem("Quit PADR", func() {
@@ -121,24 +99,35 @@ func RunDashboard() {
 	w.ShowAndRun()
 }
 
-// Tab 1: Schedule & Execution Runner
+// Tab 1: Schedule & Execution Runner (With Delete Schedule & Responsive Scroll)
 func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.Store, orch *runner.Orchestrator) fyne.CanvasObject {
 	header := widget.NewLabelWithStyle("Autonomous Runner & Scheduler", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	today := time.Now().Format("2006-01-02")
 	usageCount, _ := s.GetTotalDailyUsage(today)
-	usageLabel := widget.NewLabel(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime Window: %d minutes  |  Status: Ready",
+	usageLabel := widget.NewLabel(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime Window: %d minutes",
 		usageCount, globalCfg.Limits.MaxRunsPerDay, globalCfg.Limits.MaxRuntimeMinutes))
 
 	timeSelect := widget.NewSelect([]string{"08:00", "09:00", "12:00", "15:00", "18:00", "21:00", "23:00"}, nil)
 	timeSelect.SetSelected("09:00")
 
-	schedStatus := widget.NewLabel("Scheduler: Windows Task Scheduler ready")
+	schedStatus := widget.NewLabel("Scheduler Status: Checking Windows Task Scheduler...")
 
-	installBtn := widget.NewButtonWithIcon("Sync to Windows Task Scheduler", theme.ConfirmIcon(), func() {
+	updateSchedStatus := func() {
+		sched := scheduler.NewScheduler()
+		tasks, err := sched.List(context.Background())
+		if err != nil || len(tasks) == 0 {
+			schedStatus.SetText("Scheduler Status: Inactive (No scheduled task registered in Windows)")
+		} else {
+			schedStatus.SetText(fmt.Sprintf("Scheduler Status: Active (%d scheduled task(s) in Windows Task Scheduler)", len(tasks)))
+		}
+	}
+	updateSchedStatus()
+
+	installBtn := widget.NewButtonWithIcon("Sync / Enable Schedule", theme.ConfirmIcon(), func() {
 		projects, err := config.ListProjects()
 		if err != nil || len(projects) == 0 {
-			dialog.ShowInformation("No Projects", "Register at least one repository first.", w)
+			dialog.ShowInformation("No Projects", "Register at least one repository first in the Repositories tab.", w)
 			return
 		}
 
@@ -152,8 +141,26 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 			}
 		}
 
-		schedStatus.SetText(fmt.Sprintf("Active: Synced %d project(s) to run daily at %s", successCount, timeSelect.Selected))
-		dialog.ShowInformation("Schedule Synchronized", fmt.Sprintf("Registered daily autonomous task at %s in Windows Task Scheduler.", timeSelect.Selected), w)
+		updateSchedStatus()
+		dialog.ShowInformation("Schedule Enabled", fmt.Sprintf("Registered daily task at %s in Windows Task Scheduler (%d project(s)).", timeSelect.Selected, successCount), w)
+	})
+
+	deleteSchedBtn := widget.NewButtonWithIcon("Delete / Remove Schedule", theme.DeleteIcon(), func() {
+		projects, err := config.ListProjects()
+		if err != nil || len(projects) == 0 {
+			return
+		}
+
+		dialog.ShowConfirm("Remove Schedule", "Are you sure you want to remove all PADR tasks from Windows Task Scheduler?", func(confirmed bool) {
+			if confirmed {
+				sched := scheduler.NewScheduler()
+				for _, p := range projects {
+					_ = sched.Uninstall(context.Background(), p.Name)
+				}
+				updateSchedStatus()
+				dialog.ShowInformation("Schedule Removed", "All PADR scheduled tasks have been deleted from Windows Task Scheduler.", w)
+			}
+		}, w)
 	})
 
 	projectSelect := widget.NewSelect([]string{"All Projects"}, nil)
@@ -168,13 +175,13 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 	}
 	refreshProjects()
 
-	dryRunCheck := widget.NewCheck("Dry Run (Simulate changes without pushing to git remote)", nil)
+	dryRunCheck := widget.NewCheck("Dry Run (Simulate changes without git push)", nil)
 	dryRunCheck.SetChecked(false)
 
 	logOutput := widget.NewMultiLineEntry()
 	logOutput.SetPlaceHolder("Session execution output will appear here...")
 	logOutput.Wrapping = fyne.TextWrapWord
-	logOutput.SetMinRowsVisible(10)
+	logOutput.SetMinRowsVisible(8)
 
 	runBtn := widget.NewButtonWithIcon("Run Autonomous Pipeline Now", theme.MediaPlayIcon(), func() {
 		selected := projectSelect.Selected
@@ -215,29 +222,40 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 
 			today := time.Now().Format("2006-01-02")
 			cnt, _ := s.GetTotalDailyUsage(today)
-			usageLabel.SetText(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime Window: %d minutes  |  Status: Ready",
+			usageLabel.SetText(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime Window: %d minutes",
 				cnt, globalCfg.Limits.MaxRunsPerDay, globalCfg.Limits.MaxRuntimeMinutes))
 		}()
 	})
 
-	scrollLog := container.NewScroll(logOutput)
+	schedButtons := container.NewHBox(installBtn, deleteSchedBtn)
 
 	scheduleForm := container.NewVBox(
 		widget.NewLabelWithStyle("Daily Schedule Trigger", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewBorder(nil, nil, widget.NewLabel("Execution Time: "), installBtn, timeSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Trigger Time: "), schedButtons, timeSelect),
 		schedStatus,
 	)
 
 	manualForm := container.NewVBox(
-		widget.NewLabelWithStyle("Manual Run Control", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewBorder(nil, nil, widget.NewLabel("Target Project: "), dryRunCheck, projectSelect),
+		widget.NewLabelWithStyle("Manual Execution Trigger", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, widget.NewLabel("Target: "), dryRunCheck, projectSelect),
 		runBtn,
 	)
 
+	topSection := container.NewVBox(
+		header,
+		usageLabel,
+		widget.NewSeparator(),
+		scheduleForm,
+		widget.NewSeparator(),
+		manualForm,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Live Output Stream", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+	)
+
 	return container.NewBorder(
-		container.NewVBox(header, usageLabel, widget.NewSeparator(), scheduleForm, widget.NewSeparator(), manualForm, widget.NewSeparator()),
+		topSection,
 		nil, nil, nil,
-		scrollLog,
+		container.NewScroll(logOutput),
 	)
 }
 
@@ -254,10 +272,9 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		nil,
 	)
 
-	detailName := widget.NewLabelWithStyle("Select a repository from the left panel", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	detailName := widget.NewLabelWithStyle("Select a repository", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	detailPath := widget.NewLabel("Path: -")
 
-	// Editable Project Settings
 	branchEntry := widget.NewEntry()
 	rulesFileEntry := widget.NewEntry()
 	archFileEntry := widget.NewEntry()
@@ -301,7 +318,7 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		if err == nil {
 			docEditor.SetText(string(data))
 		} else {
-			docEditor.SetText(fmt.Sprintf("# %s\n\n(File not found at %s. Edit here and save to create it.)\n", targetFilename, fullPath))
+			docEditor.SetText(fmt.Sprintf("# %s\n\n(File not found at %s. Edit here and click 'Save Document' to create it.)\n", targetFilename, fullPath))
 		}
 	}
 
@@ -367,7 +384,7 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 	})
 
 	newTaskEntry := widget.NewEntry()
-	newTaskEntry.SetPlaceHolder("Type task to append to PADR_ROADMAP.md (e.g. Add unit test for auth)...")
+	newTaskEntry.SetPlaceHolder("Type task to append to PADR_ROADMAP.md...")
 
 	addTaskBtn := widget.NewButtonWithIcon("Add Task", theme.ContentAddIcon(), func() {
 		taskText := strings.TrimSpace(newTaskEntry.Text)
@@ -408,7 +425,7 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		}
 	})
 
-	addRepoBtn := widget.NewButtonWithIcon("Register Repository", theme.FolderNewIcon(), func() {
+	addRepoBtn := widget.NewButtonWithIcon("Register Repo", theme.FolderNewIcon(), func() {
 		nameEntry := widget.NewEntry()
 		nameEntry.SetPlaceHolder("e.g. restaurant-erp")
 
@@ -439,7 +456,7 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		form.Show()
 	})
 
-	deleteRepoBtn := widget.NewButtonWithIcon("Unregister Repo", theme.DeleteIcon(), func() {
+	deleteRepoBtn := widget.NewButtonWithIcon("Unregister", theme.DeleteIcon(), func() {
 		if currentSelectedProj == nil {
 			return
 		}
@@ -457,15 +474,15 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 	settingsCard := container.NewVBox(
 		detailName,
 		detailPath,
-		container.NewBorder(nil, nil, widget.NewLabel("Branch:         "), nil, branchEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Rules File:     "), nil, rulesFileEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Architecture:   "), nil, archFileEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Max Tasks/Run:  "), nil, maxTasksEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Branch:       "), nil, branchEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Rules File:   "), nil, rulesFileEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Architecture: "), nil, archFileEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Max Tasks/Run:"), nil, maxTasksEntry),
 		saveSettingsBtn,
 		widget.NewSeparator(),
 	)
 
-	editorBar := container.NewBorder(nil, nil, widget.NewLabel("Select Document: "), saveDocBtn, docSelector)
+	editorBar := container.NewBorder(nil, nil, widget.NewLabel("Document: "), saveDocBtn, docSelector)
 	taskInputBar := container.NewBorder(nil, nil, nil, addTaskBtn, newTaskEntry)
 
 	rightPane := container.NewBorder(
@@ -477,24 +494,24 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 	return container.NewHSplit(leftPane, rightPane)
 }
 
-// Tab 3: Providers, Ping Test & Engine Management
+// Tab 3: Providers (Two-Column Layout: Left List, Right Form Editor + Ping)
 func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObject {
-	header := widget.NewLabelWithStyle("AI Providers & Agent Engine", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	header := widget.NewLabelWithStyle("AI Providers & Fallback Priority", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	chainLabel := widget.NewLabel(fmt.Sprintf("Fallback Priority: %s", strings.Join(cfg.Routing.Models, " -> ")))
+	chainLabel := widget.NewLabel(fmt.Sprintf("Routing Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
 
 	// Form fields
 	idEntry := widget.NewEntry()
-	idEntry.SetPlaceHolder("e.g. groq-fast, gemini-flash, zai-custom, ollama-local")
+	idEntry.SetPlaceHolder("e.g. groq-fast, zai-custom, gemini-flash, ollama-local")
 
 	typeSelect := widget.NewSelect([]string{"groq", "google", "openrouter", "ollama", "custom"}, nil)
 	typeSelect.SetSelected("groq")
 
 	modelEntry := widget.NewEntry()
-	modelEntry.SetPlaceHolder("e.g. openai/gpt-oss-120b, gemini-2.5-flash, qwen2.5-coder")
+	modelEntry.SetPlaceHolder("e.g. openai/gpt-oss-120b, GLM-4.5-Flash, gemini-2.5-flash")
 
 	keyEnvEntry := widget.NewEntry()
-	keyEnvEntry.SetPlaceHolder("e.g. GROQ_API_KEY, GEMINI_API_KEY, ZAI_API_KEY")
+	keyEnvEntry.SetPlaceHolder("API Key Environment Variable (or literal key)")
 
 	endpointEntry := widget.NewEntry()
 	endpointEntry.SetPlaceHolder("Custom URL e.g. https://api.z.ai/v1 or http://localhost:11434")
@@ -502,7 +519,7 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 	limitEntry := widget.NewEntry()
 	limitEntry.SetText("5")
 
-	pingResultLabel := widget.NewLabel("Connection: Click 'Test Connection / Ping' to verify")
+	pingResultLabel := widget.NewLabel("Status: Ready to test")
 
 	var selectedModelID string
 
@@ -512,7 +529,7 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 			return len(cfg.Routing.Models)
 		},
 		func() fyne.CanvasObject {
-			return widget.NewLabel("Provider Detail Item")
+			return widget.NewLabel("Provider Placeholder")
 		},
 		func(i int, o fyne.CanvasObject) {
 			if i < len(cfg.Routing.Models) {
@@ -523,14 +540,24 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 					if !p.Enabled {
 						status = "Disabled"
 					}
-					o.(*widget.Label).SetText(fmt.Sprintf("#%d  [%s]  Type: %s  |  Model: %s  |  Limit: %d/day  |  %s",
-						i+1, p.ID, p.Provider, p.Model, p.MaxDailyRuns, status))
+					o.(*widget.Label).SetText(fmt.Sprintf("#%d [%s]\n%s (%s)\nLimit: %d/day | %s",
+						i+1, p.ID, p.Model, p.Provider, p.MaxDailyRuns, status))
 				} else {
-					o.(*widget.Label).SetText(fmt.Sprintf("#%d  [%s]  (Not configured)", i+1, mID))
+					o.(*widget.Label).SetText(fmt.Sprintf("#%d [%s] (Not configured)", i+1, mID))
 				}
 			}
 		},
 	)
+
+	clearForm := func() {
+		selectedModelID = ""
+		idEntry.SetText("")
+		modelEntry.SetText("")
+		keyEnvEntry.SetText("")
+		endpointEntry.SetText("")
+		limitEntry.SetText("5")
+		pingResultLabel.SetText("Status: Ready")
+	}
 
 	providerList.OnSelected = func(id int) {
 		if id < len(cfg.Routing.Models) {
@@ -542,7 +569,7 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 				keyEnvEntry.SetText(p.APIKeyEnv)
 				endpointEntry.SetText(p.Endpoint)
 				limitEntry.SetText(fmt.Sprintf("%d", p.MaxDailyRuns))
-				pingResultLabel.SetText("Connection: Ready to test")
+				pingResultLabel.SetText("Status: Selected")
 			}
 		}
 	}
@@ -559,7 +586,7 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 		go func() {
 			res := router.PingProvider(context.Background(), p)
 			if res.Success {
-				pingResultLabel.SetText(fmt.Sprintf("Online: %s", res.Message))
+				pingResultLabel.SetText(fmt.Sprintf("Success: %s", res.Message))
 			} else {
 				pingResultLabel.SetText(fmt.Sprintf("Failed: %s", res.Message))
 			}
@@ -601,7 +628,7 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 		}
 
 		_ = config.SaveGlobalConfig(cfg)
-		chainLabel.SetText(fmt.Sprintf("Fallback Priority: %s", strings.Join(cfg.Routing.Models, " -> ")))
+		chainLabel.SetText(fmt.Sprintf("Routing Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
 		providerList.Refresh()
 		dialog.ShowInformation("Saved", fmt.Sprintf("Provider '%s' saved.", idEntry.Text), w)
 	})
@@ -625,46 +652,81 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 		cfg.Routing.Models = newModels
 		_ = config.SaveGlobalConfig(cfg)
 
-		idEntry.SetText("")
-		modelEntry.SetText("")
-		keyEnvEntry.SetText("")
-		endpointEntry.SetText("")
-
-		chainLabel.SetText(fmt.Sprintf("Fallback Priority: %s", strings.Join(cfg.Routing.Models, " -> ")))
+		clearForm()
+		chainLabel.SetText(fmt.Sprintf("Routing Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
 		providerList.Refresh()
 		dialog.ShowInformation("Deleted", fmt.Sprintf("Provider '%s' removed.", targetID), w)
 	})
 
-	clearAllBtn := widget.NewButtonWithIcon("Clear All Providers", theme.ContentClearIcon(), func() {
+	newBtn := widget.NewButtonWithIcon("New Provider", theme.ContentAddIcon(), func() {
+		clearForm()
+	})
+
+	clearAllBtn := widget.NewButtonWithIcon("Clear All", theme.ContentClearIcon(), func() {
 		dialog.ShowConfirm("Clear All Providers", "Do you want to clear all configured providers and start fresh?", func(ok bool) {
 			if ok {
 				cfg.Providers = make(map[string]config.ProviderConfig)
 				cfg.Routing.Models = []string{}
 				_ = config.SaveGlobalConfig(cfg)
-				chainLabel.SetText("Fallback Priority: None configured")
+				clearForm()
+				chainLabel.SetText("Routing Chain: None configured")
 				providerList.Refresh()
 			}
 		}, w)
 	})
 
-	// Agent Engine Management Section
+	leftControls := container.NewHBox(newBtn, clearAllBtn)
+	leftPane := container.NewBorder(
+		container.NewVBox(widget.NewLabelWithStyle("Configured Providers", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), leftControls),
+		nil, nil, nil,
+		providerList,
+	)
+
+	actionButtons := container.NewHBox(saveBtn, pingBtn, deleteBtn)
+
+	formContent := container.NewVBox(
+		widget.NewLabelWithStyle("Provider Configuration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, widget.NewLabel("Identifier:   "), nil, idEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Provider Type:"), nil, typeSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Model ID:     "), nil, modelEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("API Key Env:  "), nil, keyEnvEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Endpoint URL: "), nil, endpointEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Daily Limit:  "), nil, limitEntry),
+		pingResultLabel,
+		actionButtons,
+	)
+
+	rightPane := container.NewScroll(formContent)
+
+	topHeader := container.NewVBox(header, chainLabel, widget.NewSeparator())
+
+	splitLayout := container.NewHSplit(leftPane, rightPane)
+	splitLayout.SetOffset(0.35)
+
+	return container.NewBorder(topHeader, nil, nil, nil, splitLayout)
+}
+
+// Tab 4: Agent Engine Configuration (Clean Dedicated Tab)
+func buildEngineTab(w fyne.Window) fyne.CanvasObject {
+	header := widget.NewLabelWithStyle("Agent Engine Configuration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
 	engineSelect := widget.NewSelect([]string{"opencode", "cline", "aider", "mock"}, nil)
 	engineSelect.SetSelected("opencode")
 
 	customEnginePathEntry := widget.NewEntry()
 	customEnginePathEntry.SetPlaceHolder("Leave empty to use PATH, or specify full executable path")
 
-	engineStatusLabel := widget.NewLabel("Checking OpenCode CLI...")
+	engineStatusLabel := widget.NewLabel("Checking engine...")
 	engineHelpLabel := widget.NewLabel("")
 
 	refreshEngineStatus := func() {
 		status := agent.DetectEngine(context.Background(), engineSelect.Selected, customEnginePathEntry.Text)
 		if status.Installed {
-			engineStatusLabel.SetText(fmt.Sprintf("Installed: %s (%s)", status.Name, status.Path))
-			engineHelpLabel.SetText("Version / Status: " + status.Version)
+			engineStatusLabel.SetText(fmt.Sprintf("Status: Installed and Ready (%s)", status.Path))
+			engineHelpLabel.SetText("Version / Detection: " + status.Version)
 		} else {
-			engineStatusLabel.SetText(fmt.Sprintf("NOT FOUND: %s executable not detected in PATH", status.Name))
-			engineHelpLabel.SetText(status.InstallHelp)
+			engineStatusLabel.SetText(fmt.Sprintf("Status: NOT FOUND — %s not detected in PATH", status.Name))
+			engineHelpLabel.SetText("How to install: " + status.InstallHelp)
 		}
 	}
 	refreshEngineStatus()
@@ -673,47 +735,31 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 		refreshEngineStatus()
 	}
 
-	engineSection := container.NewVBox(
-		widget.NewLabelWithStyle("Agent Engine Configuration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewBorder(nil, nil, widget.NewLabel("Engine:        "), nil, engineSelect),
-		container.NewBorder(nil, nil, widget.NewLabel("Custom Path:   "), nil, customEnginePathEntry),
+	checkBtn := widget.NewButtonWithIcon("Re-check Engine Status", theme.ViewRefreshIcon(), refreshEngineStatus)
+
+	infoCard := widget.NewLabel(
+		"PADR acts as an autonomous orchestrator that delegates coding sessions to local CLI tools.\n" +
+			"• OpenCode: Fast, non-interactive mode natively supported.\n" +
+			"• Mock Engine: Built-in offline simulator for safe local dry-runs.\n" +
+			"• Cline / Aider: Supported via CLI adapter.")
+
+	content := container.NewVBox(
+		header,
+		widget.NewSeparator(),
+		container.NewBorder(nil, nil, widget.NewLabel("Coding Agent Engine: "), nil, engineSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Custom Binary Path:  "), nil, customEnginePathEntry),
+		widget.NewSeparator(),
 		engineStatusLabel,
 		engineHelpLabel,
-	)
-
-	formActions := container.NewHBox(saveBtn, pingBtn, deleteBtn, clearAllBtn)
-
-	providerForm := container.NewVBox(
-		widget.NewLabelWithStyle("Provider Settings", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewBorder(nil, nil, widget.NewLabel("Identifier:   "), nil, idEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Provider Type:"), nil, typeSelect),
-		container.NewBorder(nil, nil, widget.NewLabel("Model ID:     "), nil, modelEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("API Key Env:  "), nil, keyEnvEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Endpoint URL: "), nil, endpointEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Daily Limit:  "), nil, limitEntry),
-		pingResultLabel,
-		formActions,
+		checkBtn,
 		widget.NewSeparator(),
-		engineSection,
+		infoCard,
 	)
 
-	topContent := container.NewVBox(
-		header,
-		chainLabel,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Configured Providers (Click to inspect or edit)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-	)
-
-	return container.NewBorder(
-		topContent,
-		providerForm,
-		nil,
-		nil,
-		providerList,
-	)
+	return container.NewScroll(content)
 }
 
-// Tab 4: GitHub Account Detection
+// Tab 5: GitHub Account Detection
 func buildGitHubTab(w fyne.Window) fyne.CanvasObject {
 	header := widget.NewLabelWithStyle("Connected GitHub Identity", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
@@ -764,7 +810,7 @@ func buildGitHubTab(w fyne.Window) fyne.CanvasObject {
 	)
 }
 
-// Tab 5: Execution Logs
+// Tab 6: Execution Logs
 func buildLogsTab(w fyne.Window, s *store.Store) fyne.CanvasObject {
 	header := widget.NewLabelWithStyle("Autonomous Execution History", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
