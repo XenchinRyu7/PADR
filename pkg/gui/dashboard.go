@@ -32,7 +32,7 @@ func RunDashboard() {
 	a.SetIcon(icon)
 
 	w := a.NewWindow("PADR — Autonomous Development Runner")
-	w.Resize(fyne.NewSize(960, 660))
+	w.Resize(fyne.NewSize(1000, 700))
 	w.SetIcon(icon)
 
 	// Ensure home and store are loaded
@@ -130,16 +130,16 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 
 	today := time.Now().Format("2006-01-02")
 	usageCount, _ := s.GetTotalDailyUsage(today)
-	usageLabel := widget.NewLabel(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime: %d min  |  State: Idle",
+	usageLabel := widget.NewLabel(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime Window: %d minutes  |  Status: Ready",
 		usageCount, globalCfg.Limits.MaxRunsPerDay, globalCfg.Limits.MaxRuntimeMinutes))
 
 	// Schedule setup
 	timeSelect := widget.NewSelect([]string{"08:00", "09:00", "12:00", "15:00", "18:00", "21:00", "23:00"}, nil)
 	timeSelect.SetSelected("09:00")
 
-	schedStatus := widget.NewLabel("Scheduler: Windows Task Scheduler ready")
+	schedStatus := widget.NewLabel("Scheduler: Windows Task Scheduler active")
 
-	installBtn := widget.NewButtonWithIcon("Sync to Task Scheduler", theme.ConfirmIcon(), func() {
+	installBtn := widget.NewButtonWithIcon("Sync to Windows Task Scheduler", theme.ConfirmIcon(), func() {
 		projects, err := config.ListProjects()
 		if err != nil || len(projects) == 0 {
 			dialog.ShowInformation("No Projects", "Register at least one repository first.", w)
@@ -173,13 +173,13 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 	}
 	refreshProjects()
 
-	dryRunCheck := widget.NewCheck("Dry Run (Simulate changes without pushing to remote)", nil)
+	dryRunCheck := widget.NewCheck("Dry Run (Simulate changes without pushing to git remote)", nil)
 	dryRunCheck.SetChecked(false)
 
 	logOutput := widget.NewMultiLineEntry()
-	logOutput.SetPlaceHolder("Execution output stream will be displayed here...")
+	logOutput.SetPlaceHolder("Session execution output will appear here...")
 	logOutput.Wrapping = fyne.TextWrapWord
-	logOutput.Disable()
+	logOutput.SetMinRowsVisible(10)
 
 	runBtn := widget.NewButtonWithIcon("Run Autonomous Pipeline Now", theme.MediaPlayIcon(), func() {
 		selected := projectSelect.Selected
@@ -221,26 +221,28 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 			// Update usage count
 			today := time.Now().Format("2006-01-02")
 			cnt, _ := s.GetTotalDailyUsage(today)
-			usageLabel.SetText(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime: %d min  |  State: Idle",
+			usageLabel.SetText(fmt.Sprintf("Today's Runs: %d / %d  |  Max Runtime Window: %d minutes  |  Status: Ready",
 				cnt, globalCfg.Limits.MaxRunsPerDay, globalCfg.Limits.MaxRuntimeMinutes))
 		}()
 	})
 
-	logOutput.SetMinRowsVisible(8)
 	scrollLog := container.NewScroll(logOutput)
 
-	return container.NewVBox(
-		header,
-		usageLabel,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Automated Execution Window", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewHBox(widget.NewLabel("Daily Trigger:"), timeSelect, installBtn),
+	scheduleForm := container.NewVBox(
+		widget.NewLabelWithStyle("Daily Schedule Trigger", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, widget.NewLabel("Execution Time: "), installBtn, timeSelect),
 		schedStatus,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Manual Execution Trigger", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewHBox(widget.NewLabel("Target:"), projectSelect, dryRunCheck),
+	)
+
+	manualForm := container.NewVBox(
+		widget.NewLabelWithStyle("Manual Run Control", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, widget.NewLabel("Target Project: "), dryRunCheck, projectSelect),
 		runBtn,
-		widget.NewLabelWithStyle("Session Output", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+	)
+
+	return container.NewBorder(
+		container.NewVBox(header, usageLabel, widget.NewSeparator(), scheduleForm, widget.NewSeparator(), manualForm, widget.NewSeparator()),
+		nil, nil, nil,
 		scrollLog,
 	)
 }
@@ -274,7 +276,6 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		detailPath.SetText(fmt.Sprintf("Path: %s", p.Repository.Path))
 		detailBranch.SetText(fmt.Sprintf("Branch: %s", p.Repository.Branch))
 
-		// Check PADR_ROADMAP.md or ROADMAP.md
 		padrRoadmap := filepath.Join(p.Repository.Path, "PADR_ROADMAP.md")
 		data, err := os.ReadFile(padrRoadmap)
 		if err != nil {
@@ -285,7 +286,7 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		if err == nil {
 			roadmapEditor.SetText(string(data))
 		} else {
-			roadmapEditor.SetText(fmt.Sprintf("# %s — Autonomous Roadmap\n\n- [ ] Initial autonomous task\n", p.Name))
+			roadmapEditor.SetText(fmt.Sprintf("# %s — Autonomous Development Roadmap\n\n- [ ] Initial project setup\n", p.Name))
 		}
 	}
 
@@ -304,7 +305,7 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 	}
 
 	newTaskEntry := widget.NewEntry()
-	newTaskEntry.SetPlaceHolder("New task description...")
+	newTaskEntry.SetPlaceHolder("Type new task to append to PADR_ROADMAP.md...")
 
 	addTaskBtn := widget.NewButtonWithIcon("Add Task", theme.ContentAddIcon(), func() {
 		taskText := strings.TrimSpace(newTaskEntry.Text)
@@ -338,10 +339,9 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 		}
 	})
 
-	// Add Project Dialog Button
 	addRepoBtn := widget.NewButtonWithIcon("Register Repository", theme.FolderNewIcon(), func() {
 		nameEntry := widget.NewEntry()
-		nameEntry.SetPlaceHolder("project-name (e.g. food-erp)")
+		nameEntry.SetPlaceHolder("e.g. food-erp")
 
 		pathEntry := widget.NewEntry()
 		pathEntry.SetPlaceHolder("C:/dev/your-repo")
@@ -372,70 +372,81 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 
 	leftPane := container.NewBorder(addRepoBtn, nil, nil, nil, repoList)
 
-	rightPane := container.NewVBox(
-		detailName,
-		detailPath,
-		detailBranch,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("PADR_ROADMAP.md (Task Backlog)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewHBox(newTaskEntry, addTaskBtn),
-		container.NewScroll(roadmapEditor),
+	taskInputBar := container.NewBorder(nil, nil, nil, addTaskBtn, newTaskEntry)
+
+	rightPane := container.NewBorder(
+		container.NewVBox(
+			detailName,
+			detailPath,
+			detailBranch,
+			widget.NewSeparator(),
+			widget.NewLabelWithStyle("PADR_ROADMAP.md (Autonomous Task Backlog)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			taskInputBar,
+		),
 		saveRoadmapBtn,
+		nil,
+		nil,
+		container.NewScroll(roadmapEditor),
 	)
 
 	return container.NewHSplit(leftPane, rightPane)
 }
 
-// Tab 3: Providers & Fallback Models
+// Tab 3: Providers & Fallback Models (Clean structured list, NO disabled text area!)
 func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObject {
 	header := widget.NewLabelWithStyle("AI Providers & Fallback Hierarchy", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	chainLabel := widget.NewLabel(fmt.Sprintf("Fallback Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
+	chainLabel := widget.NewLabel(fmt.Sprintf("Fallback Priority: %s", strings.Join(cfg.Routing.Models, " -> ")))
 
+	// Form fields
 	idEntry := widget.NewEntry()
-	idEntry.SetPlaceHolder("provider-id (e.g. groq-fast, gemini-flash, ollama-local)")
+	idEntry.SetPlaceHolder("e.g. groq-fast, gemini-flash, ollama-local")
 
 	typeSelect := widget.NewSelect([]string{"groq", "google", "openrouter", "ollama", "custom"}, nil)
 	typeSelect.SetSelected("groq")
 
 	modelEntry := widget.NewEntry()
-	modelEntry.SetPlaceHolder("Model Identifier (e.g. openai/gpt-oss-120b)")
+	modelEntry.SetPlaceHolder("e.g. openai/gpt-oss-120b, gemini-2.5-flash")
 
 	keyEnvEntry := widget.NewEntry()
-	keyEnvEntry.SetPlaceHolder("API Key Environment Variable (e.g. GROQ_API_KEY)")
+	keyEnvEntry.SetPlaceHolder("e.g. GROQ_API_KEY, GEMINI_API_KEY")
 
 	endpointEntry := widget.NewEntry()
-	endpointEntry.SetPlaceHolder("Custom Endpoint URL (e.g. http://localhost:11434 for Ollama)")
+	endpointEntry.SetPlaceHolder("e.g. http://localhost:11434 for Ollama")
 
 	limitEntry := widget.NewEntry()
 	limitEntry.SetText("5")
 
-	providerList := widget.NewMultiLineEntry()
-	providerList.Disable()
-
-	refreshProvidersList := func() {
-		var sb strings.Builder
-		sb.WriteString("Configured Providers:\n")
-		for _, mID := range cfg.Routing.Models {
-			p, ok := cfg.Providers[mID]
-			if !ok {
-				continue
+	// Structured List for configured providers
+	var providerList *widget.List
+	providerList = widget.NewList(
+		func() int {
+			return len(cfg.Routing.Models)
+		},
+		func() fyne.CanvasObject {
+			return widget.NewLabel("Provider Detail Item")
+		},
+		func(i int, o fyne.CanvasObject) {
+			if i < len(cfg.Routing.Models) {
+				mID := cfg.Routing.Models[i]
+				p, ok := cfg.Providers[mID]
+				if ok {
+					status := "Active"
+					if !p.Enabled {
+						status = "Disabled"
+					}
+					o.(*widget.Label).SetText(fmt.Sprintf("#%d  [%s]  Type: %s  |  Model: %s  |  Limit: %d runs/day  |  %s",
+						i+1, p.ID, p.Provider, p.Model, p.MaxDailyRuns, status))
+				} else {
+					o.(*widget.Label).SetText(fmt.Sprintf("#%d  [%s]  (Not configured)", i+1, mID))
+				}
 			}
-			status := "Active"
-			if !p.Enabled {
-				status = "Disabled"
-			}
-			sb.WriteString(fmt.Sprintf("• [%s] Type: %s | Model: %s | Limit: %d/day | %s\n",
-				p.ID, p.Provider, p.Model, p.MaxDailyRuns, status))
-		}
-		providerList.SetText(sb.String())
-		chainLabel.SetText(fmt.Sprintf("Fallback Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
-	}
-	refreshProvidersList()
+		},
+	)
 
 	saveBtn := widget.NewButtonWithIcon("Save Provider Configuration", theme.DocumentSaveIcon(), func() {
 		if idEntry.Text == "" || modelEntry.Text == "" {
-			dialog.ShowError(fmt.Errorf("ID and Model name are required"), w)
+			dialog.ShowError(fmt.Errorf("Identifier and Model name are required"), w)
 			return
 		}
 
@@ -456,7 +467,6 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 			Enabled:      true,
 		}
 
-		// Add to routing if not present
 		found := false
 		for _, m := range cfg.Routing.Models {
 			if m == idEntry.Text {
@@ -469,28 +479,35 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 		}
 
 		_ = config.SaveGlobalConfig(cfg)
-		refreshProvidersList()
-		dialog.ShowInformation("Provider Saved", fmt.Sprintf("Provider '%s' updated successfully.", idEntry.Text), w)
+		chainLabel.SetText(fmt.Sprintf("Fallback Priority: %s", strings.Join(cfg.Routing.Models, " -> ")))
+		providerList.Refresh()
+		dialog.ShowInformation("Saved", fmt.Sprintf("Provider '%s' saved and active.", idEntry.Text), w)
 	})
 
-	form := container.NewVBox(
-		widget.NewLabelWithStyle("Provider Settings", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewHBox(widget.NewLabel("Identifier:   "), idEntry),
-		container.NewHBox(widget.NewLabel("Provider Type:"), typeSelect),
-		container.NewHBox(widget.NewLabel("Model ID:     "), modelEntry),
-		container.NewHBox(widget.NewLabel("API Key Env:  "), keyEnvEntry),
-		container.NewHBox(widget.NewLabel("Endpoint URL: "), endpointEntry),
-		container.NewHBox(widget.NewLabel("Daily Quota:  "), limitEntry),
+	formLayout := container.NewVBox(
+		widget.NewLabelWithStyle("Add or Configure Provider", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, widget.NewLabel("Provider ID:    "), nil, idEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Provider Type:  "), nil, typeSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Model ID:       "), nil, modelEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("API Key Env:    "), nil, keyEnvEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Endpoint URL:   "), nil, endpointEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Daily Limit:    "), nil, limitEntry),
 		saveBtn,
 	)
 
-	return container.NewVBox(
+	topContent := container.NewVBox(
 		header,
 		chainLabel,
 		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Active Provider Fallback Hierarchy", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+	)
+
+	return container.NewBorder(
+		topContent,
+		formLayout,
+		nil,
+		nil,
 		providerList,
-		widget.NewSeparator(),
-		form,
 	)
 }
 
@@ -508,23 +525,23 @@ func buildGitHubTab(w fyne.Window) fyne.CanvasObject {
 		acc := github.DetectAccount(context.Background())
 		if acc.LoggedIn {
 			statusBadge.SetText("Status: Connected and Active")
-			userLabel.SetText(fmt.Sprintf("Username: %s", acc.Username))
+			userLabel.SetText(fmt.Sprintf("GitHub Username: %s", acc.Username))
 			emailLabel.SetText(fmt.Sprintf("Git Committer Email: %s", acc.Email))
-			methodLabel.SetText(fmt.Sprintf("Authentication: %s", acc.Method))
+			methodLabel.SetText(fmt.Sprintf("Authentication Method: %s", acc.Method))
 			if acc.Scopes != "" {
-				scopesLabel.SetText(fmt.Sprintf("Permissions: %s", acc.Scopes))
+				scopesLabel.SetText(fmt.Sprintf("Token Scopes: %s", acc.Scopes))
 			} else {
 				scopesLabel.SetText("Permissions: Default Git operations authorized")
 			}
 		} else {
 			statusBadge.SetText("Status: Not Connected")
-			userLabel.SetText("No GitHub account or Git user configured.")
-			emailLabel.SetText("Configure using 'git config --global user.name' or 'gh auth login'.")
+			userLabel.SetText("No GitHub credentials detected on this device.")
+			emailLabel.SetText("Run 'git config --global user.name' or 'gh auth login'.")
 		}
 	}
 	refreshAccount()
 
-	refreshBtn := widget.NewButtonWithIcon("Refresh Connection", theme.ViewRefreshIcon(), refreshAccount)
+	refreshBtn := widget.NewButtonWithIcon("Refresh Connection Status", theme.ViewRefreshIcon(), refreshAccount)
 
 	infoCard := widget.NewLabel(
 		"PADR integrates with your local Windows Git credentials and credential store.\n" +
@@ -545,51 +562,57 @@ func buildGitHubTab(w fyne.Window) fyne.CanvasObject {
 	)
 }
 
-// Tab 5: Execution Logs
+// Tab 5: Execution Logs (Clean structured table/list, NO disabled text box!)
 func buildLogsTab(w fyne.Window, s *store.Store) fyne.CanvasObject {
-	header := widget.NewLabelWithStyle("Recent Autonomous Run Logs", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	header := widget.NewLabelWithStyle("Autonomous Execution History", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	logDisplay := widget.NewMultiLineEntry()
-	logDisplay.Wrapping = fyne.TextWrapWord
-	logDisplay.Disable()
+	var runs []*store.RunRecord
 
-	refreshLogs := func() {
-		runs, err := s.ListRuns("", 30)
-		if err != nil || len(runs) == 0 {
-			logDisplay.SetText("No execution records found.")
-			return
+	refreshRuns := func() {
+		data, err := s.ListRuns("", 40)
+		if err == nil {
+			runs = data
 		}
-
-		var sb strings.Builder
-		for _, r := range runs {
-			sb.WriteString(fmt.Sprintf("[%s] %s | Project: %s | Model: %s (%s) | Commits: %d | Time: %ds\n",
-				r.StartedAt.Format("2006-01-02 15:04:05"),
-				strings.ToUpper(r.Status),
-				r.Project,
-				r.Provider,
-				r.Model,
-				r.Commits,
-				r.DurationSeconds,
-			))
-			if r.Error != "" {
-				sb.WriteString(fmt.Sprintf("   Note: %s\n", r.Error))
-			}
-			if r.DiffSummary != "" {
-				sb.WriteString(fmt.Sprintf("   Changes: %s\n", strings.TrimSpace(r.DiffSummary)))
-			}
-			sb.WriteString("\n")
-		}
-		logDisplay.SetText(sb.String())
 	}
-	refreshLogs()
+	refreshRuns()
 
-	refreshBtn := widget.NewButtonWithIcon("Refresh Logs", theme.ViewRefreshIcon(), refreshLogs)
+	logList := widget.NewList(
+		func() int {
+			return len(runs)
+		},
+		func() fyne.CanvasObject {
+			return widget.NewLabel("Log Item Placeholder")
+		},
+		func(i int, o fyne.CanvasObject) {
+			if i < len(runs) {
+				r := runs[i]
+				detail := fmt.Sprintf("[%s]  Status: %-8s  |  Project: %-15s  |  Model: %s (%s)  |  Commits: %d  |  Duration: %ds",
+					r.StartedAt.Format("2006-01-02 15:04"),
+					strings.ToUpper(r.Status),
+					r.Project,
+					r.Provider,
+					r.Model,
+					r.Commits,
+					r.DurationSeconds,
+				)
+				if r.Error != "" {
+					detail += fmt.Sprintf("  |  Note: %s", r.Error)
+				}
+				o.(*widget.Label).SetText(detail)
+			}
+		},
+	)
+
+	refreshBtn := widget.NewButtonWithIcon("Refresh Run History", theme.ViewRefreshIcon(), func() {
+		refreshRuns()
+		logList.Refresh()
+	})
 
 	return container.NewBorder(
 		header,
 		refreshBtn,
 		nil,
 		nil,
-		container.NewScroll(logDisplay),
+		logList,
 	)
 }

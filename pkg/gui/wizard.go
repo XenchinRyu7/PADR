@@ -112,8 +112,8 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 				container.NewVBox(
 					widget.NewLabelWithStyle("Primary AI Provider", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 					widget.NewLabel("Select your primary LLM provider. Fallback providers can be added later:"),
-					container.NewHBox(widget.NewLabel("Provider:"), providerSelect),
-					container.NewHBox(widget.NewLabel("API Key: "), apiKeyEntry),
+					container.NewBorder(nil, nil, widget.NewLabel("Provider: "), nil, providerSelect),
+					container.NewBorder(nil, nil, widget.NewLabel("API Key:  "), nil, apiKeyEntry),
 					widget.NewSeparator(),
 					widget.NewLabel("Note: For Ollama, ensure localhost:11434 is active (no API key needed)."),
 				),
@@ -124,8 +124,8 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 				container.NewVBox(
 					widget.NewLabelWithStyle("Target Repository", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 					widget.NewLabel("Specify your project repository name and local folder path:"),
-					container.NewHBox(widget.NewLabel("Project Name:"), repoNameEntry),
-					container.NewHBox(widget.NewLabel("Folder Path: "), repoPathEntry),
+					container.NewBorder(nil, nil, widget.NewLabel("Project Name: "), nil, repoNameEntry),
+					container.NewBorder(nil, nil, widget.NewLabel("Folder Path:  "), nil, repoPathEntry),
 					widget.NewSeparator(),
 					widget.NewLabel("PADR will generate 'PADR_ROADMAP.md' in this folder as the isolated task list."),
 				),
@@ -136,7 +136,7 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 				container.NewVBox(
 					widget.NewLabelWithStyle("Execution Window & Shortcuts", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 					widget.NewLabel("Select the daily schedule for autonomous development runs:"),
-					container.NewHBox(widget.NewLabel("Daily Trigger:"), timeSelect),
+					container.NewBorder(nil, nil, widget.NewLabel("Daily Trigger: "), nil, timeSelect),
 					widget.NewSeparator(),
 					widget.NewLabelWithStyle("System Integration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 					createShortcutCheck,
