@@ -119,7 +119,7 @@ agent:
   cli_path: opencode
 
 development:
-  roadmap: ROADMAP.md
+  roadmap: PADR_ROADMAP.md
   max_tasks: 2
   rules_file: PROJECT.md
   architecture_file: ARCHITECTURE.md
@@ -198,6 +198,7 @@ routing:
 
 | Command | Deskripsi |
 |---|---|
+| `padr gui` (atau `padr tray`) | Buka Dashboard Desktop Native & System Tray Manager (Fyne Dark Mode) |
 | `padr init` | Inisialisasi home directory PADR (`~/.padr`) dan database SQLite |
 | `padr project add <name>` | Daftarkan repository project untuk autonomous development |
 | `padr project list` | Tampilkan daftar semua project yang terdaftar |

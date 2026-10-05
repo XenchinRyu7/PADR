@@ -51,8 +51,12 @@ func BuildAutonomousPrompt(req AgentRunRequest) string {
 	}
 
 	roadmap := req.RoadmapFile
-	if roadmap == "" {
-		roadmap = "ROADMAP.md"
+	if roadmap == "" || roadmap == "ROADMAP.md" {
+		if fileExists(filepath.Join(req.RepoDir, "PADR_ROADMAP.md")) {
+			roadmap = "PADR_ROADMAP.md"
+		} else {
+			roadmap = "ROADMAP.md"
+		}
 	}
 
 	var readDocs []string

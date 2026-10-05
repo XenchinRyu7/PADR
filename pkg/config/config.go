@@ -320,7 +320,7 @@ func DefaultProjectConfig(name, repoPath string) *ProjectConfig {
 			CLIPath: "opencode",
 		},
 		Development: DevelopmentSettings{
-			Roadmap:  "ROADMAP.md",
+			Roadmap:  "PADR_ROADMAP.md",
 			MaxTasks: DefaultMaxTasksPerRun,
 		},
 		Git: GitSafetySettings{
