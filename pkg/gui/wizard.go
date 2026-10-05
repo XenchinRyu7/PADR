@@ -18,7 +18,7 @@ import (
 	"github.com/padr-runner/padr/pkg/scheduler"
 )
 
-// ShowSetupWizard opens a step-by-step onboarding wizard
+// ShowSetupWizard opens a clean step-by-step onboarding wizard
 func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 	wizardWin := fyne.CurrentApp().NewWindow("PADR — Quick Setup Wizard")
 	wizardWin.Resize(fyne.NewSize(620, 500))
@@ -27,20 +27,17 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 	currentStep := 1
 	const totalSteps = 5
 
-	stepTitle := widget.NewLabelWithStyle("Step 1/5: Welcome to PADR", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	stepTitle := widget.NewLabelWithStyle("Step 1 of 5: Welcome", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	contentBox := container.NewStack()
 
-	// Form inputs preserved across steps
-	// Step 2: GitHub
-	githubInfoLabel := widget.NewLabel("Checking GitHub credentials...")
+	// Form state
+	githubInfoLabel := widget.NewLabel("Verifying GitHub credentials...")
 
-	// Step 3: Provider
 	providerSelect := widget.NewSelect([]string{"groq", "google (gemini)", "openrouter", "ollama (local)"}, nil)
 	providerSelect.SetSelected("groq")
 	apiKeyEntry := widget.NewPasswordEntry()
-	apiKeyEntry.SetPlaceHolder("Enter API Key (optional for Ollama)")
+	apiKeyEntry.SetPlaceHolder("API Key (leave blank for local Ollama)")
 
-	// Step 4: Repo
 	repoNameEntry := widget.NewEntry()
 	repoNameEntry.SetText("my-project")
 	repoPathEntry := widget.NewEntry()
@@ -48,17 +45,15 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 		repoPathEntry.SetText(cwd)
 	}
 
-	// Step 5: Schedule & Shortcuts
-	timeSelect := widget.NewSelect([]string{"09:00", "13:00", "18:00", "22:00"}, nil)
+	timeSelect := widget.NewSelect([]string{"08:00", "09:00", "12:00", "15:00", "18:00", "21:00"}, nil)
 	timeSelect.SetSelected("09:00")
 	createShortcutCheck := widget.NewCheck("Create Desktop Shortcut (PADR.lnk)", nil)
 	createShortcutCheck.SetChecked(true)
 	startupCheck := widget.NewCheck("Launch in System Tray on Windows Startup", nil)
 	startupCheck.SetChecked(true)
 
-	// Buttons
 	backBtn := widget.NewButtonWithIcon("Back", theme.NavigateBackIcon(), nil)
-	nextBtn := widget.NewButtonWithIcon("Next", theme.NavigateNextIcon(), nil)
+	nextBtn := widget.NewButtonWithIcon("Continue", theme.NavigateNextIcon(), nil)
 
 	var updateStep func()
 
@@ -70,86 +65,80 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 		}
 
 		if currentStep == totalSteps {
-			nextBtn.SetText("Finish & Launch")
+			nextBtn.SetText("Finish Setup")
 			nextBtn.SetIcon(theme.ConfirmIcon())
 		} else {
-			nextBtn.SetText("Next")
+			nextBtn.SetText("Continue")
 			nextBtn.SetIcon(theme.NavigateNextIcon())
 		}
 
 		switch currentStep {
 		case 1:
-			// Welcome Screen
-			welcomeLabel := widget.NewLabelWithStyle("Welcome to PADR!", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+			welcomeLabel := widget.NewLabelWithStyle("Personal Autonomous Development Runner", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 			descLabel := widget.NewLabel(
-				"Personal Autonomous Development Runner (PADR) turns your computer\n" +
-					"into a tireless autonomous worker that pushes roadmap features to your repos\n" +
-					"on schedule while you sleep.\n\n" +
-					"This wizard will help you configure in 60 seconds:\n" +
-					"  ✓ Your verified GitHub identity\n" +
-					"  ✓ AI model provider and credentials\n" +
-					"  ✓ Target repository and PADR_ROADMAP.md\n" +
-					"  ✓ Execution time and desktop shortcut\n",
+				"PADR operates as a background development worker on your machine,\n" +
+					"autonomously completing roadmap tasks from your repositories\n" +
+					"on a scheduled window with automated verification and git commits.\n\n" +
+					"This setup will guide you through:\n" +
+					"  1. Git & GitHub identity verification\n" +
+					"  2. Primary AI provider configuration\n" +
+					"  3. First repository registration & PADR_ROADMAP.md creation\n" +
+					"  4. Daily schedule and desktop integration\n",
 			)
 			contentBox.Objects = []fyne.CanvasObject{container.NewVBox(welcomeLabel, descLabel)}
 
 		case 2:
-			// GitHub Detection
 			acc := github.DetectAccount(context.Background())
-			statusText := "🔴 No GitHub connection detected."
+			statusText := "No GitHub connection detected."
 			if acc.LoggedIn {
-				statusText = fmt.Sprintf("🟢 Connected as: %s\nEmail: %s\nMethod: %s",
+				statusText = fmt.Sprintf("Account: %s\nEmail: %s\nAuth Method: %s",
 					acc.Username, acc.Email, acc.Method)
 			}
 			githubInfoLabel.SetText(statusText)
 
 			contentBox.Objects = []fyne.CanvasObject{
 				container.NewVBox(
-					widget.NewLabelWithStyle("Verify Your GitHub Account", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-					widget.NewLabel("PADR uses your native Windows Git credentials so contributions appear on your GitHub profile:"),
+					widget.NewLabelWithStyle("GitHub Identity", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+					widget.NewLabel("PADR automatically identifies your local Git and GitHub CLI credentials:"),
 					widget.NewSeparator(),
 					githubInfoLabel,
 					widget.NewSeparator(),
-					widget.NewLabel("All autonomous commits will be authored by this account."),
+					widget.NewLabel("All autonomous commits will be attributed to this verified profile."),
 				),
 			}
 
 		case 3:
-			// Model Provider
 			contentBox.Objects = []fyne.CanvasObject{
 				container.NewVBox(
-					widget.NewLabelWithStyle("Configure Default AI Provider", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-					widget.NewLabel("Choose your primary model provider. You can configure fallback models later:"),
+					widget.NewLabelWithStyle("Primary AI Provider", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+					widget.NewLabel("Select your primary LLM provider. Fallback providers can be added later:"),
 					container.NewHBox(widget.NewLabel("Provider:"), providerSelect),
 					container.NewHBox(widget.NewLabel("API Key: "), apiKeyEntry),
 					widget.NewSeparator(),
-					widget.NewLabel("Tip: If using Ollama, ensure Ollama is running at http://localhost:11434 (API key not required)."),
+					widget.NewLabel("Note: For Ollama, ensure localhost:11434 is active (no API key needed)."),
 				),
 			}
 
 		case 4:
-			// Repository Selection
 			contentBox.Objects = []fyne.CanvasObject{
 				container.NewVBox(
-					widget.NewLabelWithStyle("Select Target Repository", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-					widget.NewLabel("Enter the project name and local folder path:"),
+					widget.NewLabelWithStyle("Target Repository", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+					widget.NewLabel("Specify your project repository name and local folder path:"),
 					container.NewHBox(widget.NewLabel("Project Name:"), repoNameEntry),
 					container.NewHBox(widget.NewLabel("Folder Path: "), repoPathEntry),
 					widget.NewSeparator(),
-					widget.NewLabel("PADR will automatically create 'PADR_ROADMAP.md' in this repository\n" +
-						"as the isolated task list for autonomous development."),
+					widget.NewLabel("PADR will generate 'PADR_ROADMAP.md' in this folder as the isolated task list."),
 				),
 			}
 
 		case 5:
-			// Schedule and Shortcuts
 			contentBox.Objects = []fyne.CanvasObject{
 				container.NewVBox(
-					widget.NewLabelWithStyle("Execution Schedule & System Integration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-					widget.NewLabel("When should PADR run autonomous tasks?"),
-					container.NewHBox(widget.NewLabel("Daily Run Time:"), timeSelect),
+					widget.NewLabelWithStyle("Execution Window & Shortcuts", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+					widget.NewLabel("Select the daily schedule for autonomous development runs:"),
+					container.NewHBox(widget.NewLabel("Daily Trigger:"), timeSelect),
 					widget.NewSeparator(),
-					widget.NewLabelWithStyle("Desktop & Tray Shortcuts:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+					widget.NewLabelWithStyle("System Integration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 					createShortcutCheck,
 					startupCheck,
 				),
@@ -177,7 +166,6 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 		_ = config.InitPadrHome()
 		globalCfg, _ := config.LoadGlobalConfig()
 
-		// Save provider if API key entered
 		if apiKeyEntry.Text != "" {
 			switch providerSelect.Selected {
 			case "groq":
@@ -189,7 +177,6 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 			}
 		}
 
-		// Save Repository
 		if repoPathEntry.Text != "" && repoNameEntry.Text != "" {
 			absPath, _ := filepath.Abs(repoPathEntry.Text)
 			proj := config.DefaultProjectConfig(repoNameEntry.Text, absPath)
@@ -199,18 +186,16 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 			_ = config.SaveProjectConfig(absPath, proj)
 			_ = config.RegisterProject(proj)
 
-			// Create initial PADR_ROADMAP.md if not exists
 			padrRoadmap := filepath.Join(absPath, "PADR_ROADMAP.md")
 			if _, err := os.Stat(padrRoadmap); os.IsNotExist(err) {
 				initialRoadmap := fmt.Sprintf("# %s — Autonomous Development Roadmap\n\n"+
-					"This file is dedicated to PADR autonomous development tasks.\n\n"+
-					"## Backlog\n"+
-					"- [ ] Initial project optimization and cleanup\n"+
-					"- [ ] Add test coverage for core components\n", proj.Name)
+					"This file defines the isolated backlog for PADR autonomous runner.\n\n"+
+					"## Tasks\n"+
+					"- [ ] Initial project setup and verification\n"+
+					"- [ ] Add test suite validation\n", proj.Name)
 				_ = os.WriteFile(padrRoadmap, []byte(initialRoadmap), 0644)
 			}
 
-			// Install to Windows Task Scheduler
 			sched := scheduler.NewScheduler()
 			exePath, _ := os.Executable()
 			_ = sched.Install(context.Background(), proj.Name, timeSelect.Selected, exePath)
@@ -218,17 +203,15 @@ func ShowSetupWizard(parent fyne.Window, onComplete func()) {
 
 		_ = config.SaveGlobalConfig(globalCfg)
 
-		// Create Desktop Shortcut if checked
 		if createShortcutCheck.Checked {
 			_ = CreateDesktopShortcut()
 		}
 
-		// Create Windows Startup Shortcut if checked
 		if startupCheck.Checked {
 			_ = CreateStartupShortcut()
 		}
 
-		dialog.ShowInformation("Setup Complete!", "PADR has been successfully configured and desktop shortcuts created!", parent)
+		dialog.ShowInformation("Setup Complete", "PADR has been configured successfully.", parent)
 		wizardWin.Close()
 		if onComplete != nil {
 			onComplete()
