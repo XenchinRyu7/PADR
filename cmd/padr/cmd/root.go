@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/fatih/color"
+	"github.com/padr-runner/padr/pkg/gui"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +22,9 @@ var rootCmd = &cobra.Command{
 `) + `
 Runs autonomous development tasks on local repositories using AI coding agents
 with model provider swapping, Git safety guards, and task scheduling.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		gui.RunDashboard()
+	},
 }
 
 func Execute() error {

@@ -71,11 +71,16 @@ func RunDashboard() {
 	// Setup System Tray
 	if desk, ok := a.(desktop.App); ok {
 		menu := fyne.NewMenu("PADR",
-			fyne.NewMenuItem("Open Dashboard", func() {
+			fyne.NewMenuItem("🚀 Open Dashboard", func() {
 				w.Show()
 				w.RequestFocus()
 			}),
-			fyne.NewMenuItem("Run All Projects Now", func() {
+			fyne.NewMenuItem("⚙️ Settings & Providers", func() {
+				w.Show()
+				w.RequestFocus()
+				tabs.SelectIndex(2)
+			}),
+			fyne.NewMenuItem("▶ Run All Projects Now", func() {
 				go func() {
 					projects, _ := config.ListProjects()
 					for _, p := range projects {
@@ -84,7 +89,18 @@ func RunDashboard() {
 				}()
 			}),
 			fyne.NewMenuItemSeparator(),
-			fyne.NewMenuItem("Quit", func() {
+			fyne.NewMenuItem("🧙 Run Setup Wizard...", func() {
+				ShowSetupWizard(w, func() {
+					w.Show()
+				})
+			}),
+			fyne.NewMenuItem("🔗 Create Desktop Shortcut", func() {
+				if err := CreateDesktopShortcut(); err == nil {
+					dialog.ShowInformation("Shortcut Created", "PADR shortcut placed on your Desktop!", w)
+				}
+			}),
+			fyne.NewMenuItemSeparator(),
+			fyne.NewMenuItem("❌ Exit PADR", func() {
 				a.Quit()
 			}),
 		)
@@ -96,6 +112,14 @@ func RunDashboard() {
 	w.SetCloseIntercept(func() {
 		w.Hide()
 	})
+
+	// If no projects registered yet, launch the Onboarding Wizard automatically
+	existingProjs, _ := config.ListProjects()
+	if len(existingProjs) == 0 {
+		ShowSetupWizard(w, func() {
+			w.Show()
+		})
+	}
 
 	w.ShowAndRun()
 }
