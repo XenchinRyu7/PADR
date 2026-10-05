@@ -46,6 +46,9 @@ func (e *OpenCodeEngine) Run(ctx context.Context, req AgentRunRequest) (*AgentRu
 	if req.Provider.Model != "" {
 		args = append(args, "--model", req.Provider.Model)
 	}
+	if req.Provider.Endpoint != "" {
+		args = append(args, "--base-url", req.Provider.Endpoint)
+	}
 	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, exePath, args...)
@@ -56,11 +59,13 @@ func (e *OpenCodeEngine) Run(ctx context.Context, req AgentRunRequest) (*AgentRu
 	if req.Provider.APIKeyEnv != "" {
 		if val := os.Getenv(req.Provider.APIKeyEnv); val != "" {
 			env = append(env, fmt.Sprintf("%s=%s", req.Provider.APIKeyEnv, val))
+			env = append(env, fmt.Sprintf("OPENAI_API_KEY=%s", val))
 		}
 	}
 	if req.Provider.Endpoint != "" {
 		env = append(env, fmt.Sprintf("OLLAMA_HOST=%s", req.Provider.Endpoint))
 		env = append(env, fmt.Sprintf("OPENAI_BASE_URL=%s", req.Provider.Endpoint))
+		env = append(env, fmt.Sprintf("OPENAI_API_BASE=%s", req.Provider.Endpoint))
 	}
 	cmd.Env = env
 

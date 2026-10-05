@@ -86,13 +86,14 @@ Read and understand the context from:
 %s
 %s
 Rules:
-1. Pick the next incomplete task from %s.
-2. Do not work on unrelated features or speculative code.
-3. Keep changes minimal, clean, and focused on the selected task.
-4. Run project validation commands and fix any failures caused by your changes.
-5. Do not modify or leak credentials, tokens, or .env secrets.
-6. Do not rewrite existing architecture or abstractions without clear justification.
-7. Ensure all code compiles and unit tests pass before completing.
+1. Pick ONLY ONE next incomplete task from %s.
+2. Break down the implementation into small, bite-sized logical steps.
+3. Make separate, focused conventional commits for each distinct step (e.g., feat:, test:, refactor:).
+4. Do NOT dump all changes into a single monolithic commit. Keep changes minimal and conservative.
+5. Run project validation commands and fix any failures caused by your changes.
+6. Do not modify or leak credentials, tokens, or .env secrets.
+7. Do not rewrite existing architecture or abstractions without clear justification.
+8. Ensure all code compiles and unit tests pass before completing.
 
 Complete at most %d task(s).`,
 		req.ProjectName,
