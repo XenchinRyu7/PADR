@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,6 +25,12 @@ import (
 	"github.com/padr-runner/padr/pkg/scheduler"
 	"github.com/padr-runner/padr/pkg/store"
 )
+
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func stripANSI(s string) string {
+	return ansiRegex.ReplaceAllString(s, "")
+}
 
 // RunDashboard launches the native desktop dashboard with system tray support
 func RunDashboard() {
@@ -51,9 +58,16 @@ func RunDashboard() {
 
 	orch := runner.NewOrchestrator(globalCfg, dbStore)
 
-	tabSchedule := buildScheduleTab(w, globalCfg, dbStore, orch)
+	var refreshRunnerProviders func()
+	tabSchedule := buildScheduleTab(w, globalCfg, dbStore, orch, func(ref func()) {
+		refreshRunnerProviders = ref
+	})
 	tabRepos := buildReposTab(w)
-	tabProviders := buildProvidersTab(w, globalCfg)
+	tabProviders := buildProvidersTab(w, globalCfg, func() {
+		if refreshRunnerProviders != nil {
+			refreshRunnerProviders()
+		}
+	})
 	tabEngine := buildEngineTab(w)
 	tabGitHub := buildGitHubTab(w)
 	tabLogs := buildLogsTab(w, dbStore)
@@ -76,10 +90,6 @@ func RunDashboard() {
 				w.Show()
 				w.RequestFocus()
 			}),
-			fyne.NewMenuItemSeparator(),
-			fyne.NewMenuItem("Quit PADR", func() {
-				a.Quit()
-			}),
 		)
 		desk.SetSystemTrayMenu(menu)
 		desk.SetSystemTrayIcon(icon)
@@ -100,7 +110,7 @@ func RunDashboard() {
 }
 
 // Tab 1: Schedule & Execution Runner (With Delete Schedule & Responsive Scroll)
-func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.Store, orch *runner.Orchestrator) fyne.CanvasObject {
+func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.Store, orch *runner.Orchestrator, registerRefresh func(func())) fyne.CanvasObject {
 	header := widget.NewLabelWithStyle("Autonomous Runner & Scheduler", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	today := time.Now().Format("2006-01-02")
@@ -175,6 +185,36 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 	}
 	refreshProjects()
 
+	providerSelect := widget.NewSelect([]string{"Auto (Router Fallback)"}, nil)
+	refreshRunnerProviders := func() {
+		opts := []string{"Auto (Router Fallback)"}
+		for _, m := range globalCfg.Routing.Models {
+			opts = append(opts, m)
+		}
+		for k := range globalCfg.Providers {
+			found := false
+			for _, o := range opts {
+				if o == k {
+					found = true
+					break
+				}
+			}
+			if !found {
+				opts = append(opts, k)
+			}
+		}
+		providerSelect.Options = opts
+		if providerSelect.Selected == "" {
+			providerSelect.SetSelected("Auto (Router Fallback)")
+		} else {
+			providerSelect.Refresh()
+		}
+	}
+	refreshRunnerProviders()
+	if registerRefresh != nil {
+		registerRefresh(refreshRunnerProviders)
+	}
+
 	dryRunCheck := widget.NewCheck("Dry Run (Simulate changes without git push)", nil)
 	dryRunCheck.SetChecked(false)
 
@@ -186,10 +226,20 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 	runBtn := widget.NewButtonWithIcon("Run Autonomous Pipeline Now", theme.MediaPlayIcon(), func() {
 		selected := projectSelect.Selected
 		isDryRun := dryRunCheck.Checked
+		activeProv := providerSelect.Selected
 		logOutput.SetText("Starting autonomous execution session...\n")
 
 		go func() {
-			opts := runner.RunOptions{DryRun: isDryRun}
+			opts := runner.RunOptions{
+				DryRun:           isDryRun,
+				ProviderOverride: activeProv,
+				OnProgress: func(chunk string) {
+					clean := stripANSI(chunk)
+					if clean != "" {
+						logOutput.SetText(logOutput.Text + clean)
+					}
+				},
+			}
 			if selected == "All Projects" {
 				projects, _ := config.ListProjects()
 				if len(projects) == 0 {
@@ -238,6 +288,7 @@ func buildScheduleTab(w fyne.Window, globalCfg *config.GlobalConfig, s *store.St
 	manualForm := container.NewVBox(
 		widget.NewLabelWithStyle("Manual Execution Trigger", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		container.NewBorder(nil, nil, widget.NewLabel("Target: "), dryRunCheck, projectSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Provider: "), nil, providerSelect),
 		runBtn,
 	)
 
@@ -494,8 +545,37 @@ func buildReposTab(w fyne.Window) fyne.CanvasObject {
 	return container.NewHSplit(leftPane, rightPane)
 }
 
+type providerListItem struct {
+	widget.BaseWidget
+	title   *widget.Label
+	sub1    *widget.Label
+	sub2    *widget.Label
+	content *fyne.Container
+	onTap   func()
+}
+
+func newProviderListItem() *providerListItem {
+	item := &providerListItem{}
+	item.title = widget.NewLabelWithStyle("Provider Title", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	item.sub1 = widget.NewLabel("Model: Placeholder")
+	item.sub2 = widget.NewLabel("Status: Active | Limit: 5/day")
+	item.content = container.NewVBox(item.title, item.sub1, item.sub2)
+	item.ExtendBaseWidget(item)
+	return item
+}
+
+func (p *providerListItem) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(p.content)
+}
+
+func (p *providerListItem) Tapped(_ *fyne.PointEvent) {
+	if p.onTap != nil {
+		p.onTap()
+	}
+}
+
 // Tab 3: Providers (Two-Column Layout: Left List, Right Form Editor + Ping)
-func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObject {
+func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig, onProvidersChanged func()) fyne.CanvasObject {
 	header := widget.NewLabelWithStyle("AI Providers & Fallback Priority", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	chainLabel := widget.NewLabel(fmt.Sprintf("Routing Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
@@ -507,14 +587,57 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 	typeSelect := widget.NewSelect([]string{"groq", "google", "openrouter", "ollama", "custom"}, nil)
 	typeSelect.SetSelected("groq")
 
+	endpointEntry := widget.NewEntry()
+	endpointEntry.SetPlaceHolder("Optional custom endpoint (leave empty for default cloud API)")
+
 	modelEntry := widget.NewEntry()
-	modelEntry.SetPlaceHolder("e.g. openai/gpt-oss-120b, GLM-4.5-Flash, gemini-2.5-flash")
+	modelEntry.SetPlaceHolder("Enter model or click 'Test Connection / Ping' to fetch from API")
+
+	detectedModelsSelect := widget.NewSelect([]string{"(Click 'Test Connection / Ping' to fetch models from API)"}, func(selected string) {
+		if selected != "" && !strings.HasPrefix(selected, "(") {
+			modelEntry.SetText(selected)
+		}
+	})
+
+	typeSelect.OnChanged = func(selected string) {
+		switch selected {
+		case "google":
+			endpointEntry.SetPlaceHolder("Optional: defaults to Google Generative AI endpoint")
+			modelEntry.SetPlaceHolder("e.g. gemini-3.8-flash (or click Ping to fetch live models)")
+		case "groq":
+			endpointEntry.SetPlaceHolder("Optional: defaults to Groq Cloud endpoint")
+			modelEntry.SetPlaceHolder("e.g. qwen/qwen3.8-27b (or click Ping to fetch live models)")
+		case "openrouter":
+			endpointEntry.SetPlaceHolder("Optional: defaults to OpenRouter endpoint")
+			modelEntry.SetPlaceHolder("e.g. deepseek/deepseek-chat:free (or click Ping to fetch live models)")
+		case "custom":
+			endpointEntry.SetPlaceHolder("Required: e.g. https://api.z.ai/api/paas/v4 or https://api.deepseek.com")
+			modelEntry.SetPlaceHolder("Enter model name (or click Ping to fetch live models)")
+		case "ollama":
+			endpointEntry.SetPlaceHolder("Optional: default is http://localhost:11434")
+			modelEntry.SetPlaceHolder("Enter model name (or click Ping to fetch local models)")
+		default:
+			endpointEntry.SetPlaceHolder("Optional custom endpoint (leave empty for default cloud API)")
+		}
+		go func(prov string) {
+			ocModels := router.FetchOpenCodeModels(context.Background(), prov)
+			if len(ocModels) > 0 {
+				detectedModelsSelect.Options = ocModels
+				if modelEntry.Text == "" {
+					modelEntry.SetText(ocModels[0])
+					detectedModelsSelect.SetSelected(ocModels[0])
+				}
+			} else {
+				detectedModelsSelect.Options = []string{"(Click 'Test Connection / Ping' to fetch models from API)"}
+				detectedModelsSelect.SetSelected("(Click 'Test Connection / Ping' to fetch models from API)")
+			}
+			detectedModelsSelect.Refresh()
+		}(selected)
+	}
+	typeSelect.OnChanged(typeSelect.Selected)
 
 	keyEnvEntry := widget.NewEntry()
-	keyEnvEntry.SetPlaceHolder("API Key Environment Variable (or literal key)")
-
-	endpointEntry := widget.NewEntry()
-	endpointEntry.SetPlaceHolder("Custom URL e.g. https://api.z.ai/v1 or http://localhost:11434")
+	keyEnvEntry.SetPlaceHolder("API Key or env var name (e.g. GROQ_API_KEY)")
 
 	limitEntry := widget.NewEntry()
 	limitEntry.SetText("5")
@@ -524,14 +647,39 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 	var selectedModelID string
 
 	var providerList *widget.List
+
+	selectProvider := func(id int) {
+		if id < len(cfg.Routing.Models) {
+			selectedModelID = cfg.Routing.Models[id]
+			if p, ok := cfg.Providers[selectedModelID]; ok {
+				idEntry.SetText(p.ID)
+				typeSelect.SetSelected(p.Provider)
+				modelEntry.SetText(p.Model)
+				displayKey := p.APIKeyEnv
+				if p.APIKey != "" {
+					displayKey = p.APIKey
+				}
+				keyEnvEntry.SetText(displayKey)
+				endpointEntry.SetText(p.Endpoint)
+				limitEntry.SetText(fmt.Sprintf("%d", p.MaxDailyRuns))
+				pingResultLabel.SetText("Status: Selected - " + p.KeyStatus())
+			}
+		}
+	}
+
 	providerList = widget.NewList(
 		func() int {
 			return len(cfg.Routing.Models)
 		},
 		func() fyne.CanvasObject {
-			return widget.NewLabel("Provider Placeholder")
+			return newProviderListItem()
 		},
 		func(i int, o fyne.CanvasObject) {
+			item := o.(*providerListItem)
+			item.onTap = func() {
+				selectProvider(i)
+				providerList.Select(i)
+			}
 			if i < len(cfg.Routing.Models) {
 				mID := cfg.Routing.Models[i]
 				p, ok := cfg.Providers[mID]
@@ -540,19 +688,25 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 					if !p.Enabled {
 						status = "Disabled"
 					}
-					o.(*widget.Label).SetText(fmt.Sprintf("#%d [%s]\n%s (%s)\nLimit: %d/day | %s",
-						i+1, p.ID, p.Model, p.Provider, p.MaxDailyRuns, status))
+					item.title.SetText(fmt.Sprintf("#%d [%s] (%s)", i+1, p.ID, p.Provider))
+					item.sub1.SetText(fmt.Sprintf("Model: %s", p.Model))
+					item.sub2.SetText(fmt.Sprintf("%s | Limit: %d/day | %s", p.KeyStatus(), p.MaxDailyRuns, status))
 				} else {
-					o.(*widget.Label).SetText(fmt.Sprintf("#%d [%s] (Not configured)", i+1, mID))
+					item.title.SetText(fmt.Sprintf("#%d [%s]", i+1, mID))
+					item.sub1.SetText("Not configured")
+					item.sub2.SetText("")
 				}
 			}
 		},
 	)
 
 	clearForm := func() {
+		providerList.UnselectAll()
 		selectedModelID = ""
 		idEntry.SetText("")
 		modelEntry.SetText("")
+		detectedModelsSelect.Options = []string{"(Click 'Test Connection / Ping' to fetch models)"}
+		detectedModelsSelect.SetSelected("(Click 'Test Connection / Ping' to fetch models)")
 		keyEnvEntry.SetText("")
 		endpointEntry.SetText("")
 		limitEntry.SetText("5")
@@ -560,33 +714,37 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 	}
 
 	providerList.OnSelected = func(id int) {
-		if id < len(cfg.Routing.Models) {
-			selectedModelID = cfg.Routing.Models[id]
-			if p, ok := cfg.Providers[selectedModelID]; ok {
-				idEntry.SetText(p.ID)
-				typeSelect.SetSelected(p.Provider)
-				modelEntry.SetText(p.Model)
-				keyEnvEntry.SetText(p.APIKeyEnv)
-				endpointEntry.SetText(p.Endpoint)
-				limitEntry.SetText(fmt.Sprintf("%d", p.MaxDailyRuns))
-				pingResultLabel.SetText("Status: Selected")
-			}
-		}
+		selectProvider(id)
 	}
 
 	pingBtn := widget.NewButtonWithIcon("Test Connection / Ping", theme.MediaPlayIcon(), func() {
+		keyVal := strings.TrimSpace(keyEnvEntry.Text)
+		directKey := ""
+		envName := ""
+		if config.IsEnvVarName(keyVal) {
+			envName = keyVal
+		} else {
+			directKey = keyVal
+			envName = keyVal
+		}
+
 		p := config.ProviderConfig{
 			ID:        idEntry.Text,
 			Provider:  typeSelect.Selected,
 			Model:     modelEntry.Text,
-			APIKeyEnv: keyEnvEntry.Text,
+			APIKeyEnv: envName,
+			APIKey:    directKey,
 			Endpoint:  endpointEntry.Text,
 		}
-		pingResultLabel.SetText("Testing connection...")
+		pingResultLabel.SetText("Testing connection & fetching models...")
 		go func() {
 			res := router.PingProvider(context.Background(), p)
 			if res.Success {
 				pingResultLabel.SetText(fmt.Sprintf("Success: %s", res.Message))
+				if len(res.AvailableModels) > 0 {
+					detectedModelsSelect.Options = res.AvailableModels
+					detectedModelsSelect.Refresh()
+				}
 			} else {
 				pingResultLabel.SetText(fmt.Sprintf("Failed: %s", res.Message))
 			}
@@ -606,11 +764,33 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 			cfg.Providers = make(map[string]config.ProviderConfig)
 		}
 
+		keyVal := strings.TrimSpace(keyEnvEntry.Text)
+		directKey := ""
+		envName := ""
+		if config.IsEnvVarName(keyVal) {
+			envName = keyVal
+		} else {
+			directKey = keyVal
+			envName = keyVal
+		}
+
+		// If editing an existing provider and renamed the identifier:
+		if selectedModelID != "" && selectedModelID != idEntry.Text {
+			delete(cfg.Providers, selectedModelID)
+			for idx, m := range cfg.Routing.Models {
+				if m == selectedModelID {
+					cfg.Routing.Models[idx] = idEntry.Text
+					break
+				}
+			}
+		}
+
 		cfg.Providers[idEntry.Text] = config.ProviderConfig{
 			ID:           idEntry.Text,
 			Provider:     typeSelect.Selected,
 			Model:        modelEntry.Text,
-			APIKeyEnv:    keyEnvEntry.Text,
+			APIKeyEnv:    envName,
+			APIKey:       directKey,
 			Endpoint:     endpointEntry.Text,
 			MaxDailyRuns: limit,
 			Enabled:      true,
@@ -627,9 +807,13 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 			cfg.Routing.Models = append(cfg.Routing.Models, idEntry.Text)
 		}
 
+		selectedModelID = idEntry.Text
 		_ = config.SaveGlobalConfig(cfg)
 		chainLabel.SetText(fmt.Sprintf("Routing Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
 		providerList.Refresh()
+		if onProvidersChanged != nil {
+			onProvidersChanged()
+		}
 		dialog.ShowInformation("Saved", fmt.Sprintf("Provider '%s' saved.", idEntry.Text), w)
 	})
 
@@ -655,6 +839,9 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 		clearForm()
 		chainLabel.SetText(fmt.Sprintf("Routing Chain: %s", strings.Join(cfg.Routing.Models, " -> ")))
 		providerList.Refresh()
+		if onProvidersChanged != nil {
+			onProvidersChanged()
+		}
 		dialog.ShowInformation("Deleted", fmt.Sprintf("Provider '%s' removed.", targetID), w)
 	})
 
@@ -671,6 +858,9 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 				clearForm()
 				chainLabel.SetText("Routing Chain: None configured")
 				providerList.Refresh()
+				if onProvidersChanged != nil {
+					onProvidersChanged()
+				}
 			}
 		}, w)
 	})
@@ -686,12 +876,13 @@ func buildProvidersTab(w fyne.Window, cfg *config.GlobalConfig) fyne.CanvasObjec
 
 	formContent := container.NewVBox(
 		widget.NewLabelWithStyle("Provider Configuration", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewBorder(nil, nil, widget.NewLabel("Identifier:   "), nil, idEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Provider Type:"), nil, typeSelect),
-		container.NewBorder(nil, nil, widget.NewLabel("Model ID:     "), nil, modelEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("API Key Env:  "), nil, keyEnvEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Endpoint URL: "), nil, endpointEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("Daily Limit:  "), nil, limitEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Identifier:    "), nil, idEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Provider Type: "), nil, typeSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Endpoint URL:  "), nil, endpointEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("API Key / Env: "), nil, keyEnvEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Model ID:      "), nil, modelEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("Fetch Model:   "), nil, detectedModelsSelect),
+		container.NewBorder(nil, nil, widget.NewLabel("Daily Limit:   "), nil, limitEntry),
 		pingResultLabel,
 		actionButtons,
 	)
@@ -817,7 +1008,7 @@ func buildLogsTab(w fyne.Window, s *store.Store) fyne.CanvasObject {
 	var runs []*store.RunRecord
 
 	refreshRuns := func() {
-		data, err := s.ListRuns("", 40)
+		data, err := s.ListRuns("", 50)
 		if err == nil {
 			runs = data
 		}
@@ -829,27 +1020,83 @@ func buildLogsTab(w fyne.Window, s *store.Store) fyne.CanvasObject {
 			return len(runs)
 		},
 		func() fyne.CanvasObject {
-			return widget.NewLabel("Log Item Placeholder")
+			title := widget.NewLabelWithStyle("Run Title Placeholder", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			sub := widget.NewLabel("Provider & Model Placeholder")
+			return container.NewVBox(title, sub)
 		},
 		func(i int, o fyne.CanvasObject) {
 			if i < len(runs) {
 				r := runs[i]
-				detail := fmt.Sprintf("[%s]  Status: %-8s  |  Project: %-15s  |  Model: %s (%s)  |  Commits: %d  |  Duration: %ds",
-					r.StartedAt.Format("2006-01-02 15:04"),
-					strings.ToUpper(r.Status),
-					r.Project,
-					r.Provider,
-					r.Model,
-					r.Commits,
-					r.DurationSeconds,
-				)
-				if r.Error != "" {
-					detail += fmt.Sprintf("  |  Note: %s", r.Error)
+				box := o.(*fyne.Container)
+				title := box.Objects[0].(*widget.Label)
+				sub := box.Objects[1].(*widget.Label)
+
+				projName := r.Project
+				if len(projName) > 24 {
+					projName = projName[:21] + "..."
 				}
-				o.(*widget.Label).SetText(detail)
+
+				title.SetText(fmt.Sprintf("[%s] %s  •  %s (%ds)",
+					r.StartedAt.Format("15:04:05"),
+					projName,
+					strings.ToUpper(r.Status),
+					r.DurationSeconds,
+				))
+
+				provShort := r.Provider
+				if len(provShort) > 18 {
+					provShort = provShort[:15] + "..."
+				}
+				modelShort := r.Model
+				if len(modelShort) > 28 {
+					modelShort = modelShort[:25] + "..."
+				}
+				sub.SetText(fmt.Sprintf("Provider: %s  |  Model: %s  |  Commits: %d",
+					provShort, modelShort, r.Commits))
 			}
 		},
 	)
+
+	logList.OnSelected = func(id int) {
+		if id >= len(runs) {
+			return
+		}
+		r := runs[id]
+
+		detailVBox := container.NewVBox(
+			widget.NewLabelWithStyle(fmt.Sprintf("Run #%d — %s", r.ID, r.Project), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabel(fmt.Sprintf("Started: %s  |  Finished: %s  |  Duration: %ds",
+				r.StartedAt.Format("2006-01-02 15:04:05"),
+				r.FinishedAt.Format("15:04:05"),
+				r.DurationSeconds)),
+			widget.NewLabel(fmt.Sprintf("Status: %s  |  Commits: %d  |  Tasks Completed: %d",
+				strings.ToUpper(r.Status), r.Commits, r.TasksCompleted)),
+			widget.NewLabel(fmt.Sprintf("Provider: %s  |  Model: %s", r.Provider, r.Model)),
+			widget.NewSeparator(),
+		)
+
+		if r.Error != "" {
+			errBox := widget.NewMultiLineEntry()
+			errBox.Wrapping = fyne.TextWrapWord
+			errBox.SetText(r.Error)
+			detailVBox.Add(widget.NewLabelWithStyle("Error / Reason:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+			detailVBox.Add(errBox)
+		}
+
+		if r.LogOutput != "" {
+			outBox := widget.NewMultiLineEntry()
+			outBox.Wrapping = fyne.TextWrapWord
+			outBox.SetText(r.LogOutput)
+			detailVBox.Add(widget.NewLabelWithStyle("Agent Output / Logs:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+			detailVBox.Add(outBox)
+		}
+
+		scrollContent := container.NewVScroll(detailVBox)
+		d := dialog.NewCustom("Execution Run Details", "Close", scrollContent, w)
+		d.Resize(fyne.NewSize(750, 520))
+		d.Show()
+		logList.UnselectAll()
+	}
 
 	refreshBtn := widget.NewButtonWithIcon("Refresh Run History", theme.ViewRefreshIcon(), func() {
 		refreshRuns()

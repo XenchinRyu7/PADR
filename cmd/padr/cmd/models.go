@@ -44,16 +44,7 @@ var modelsCmd = &cobra.Command{
 				statusStr = color.YellowString("disabled")
 			}
 
-			keyStatus := prov.APIKeyEnv
-			if prov.APIKeyEnv != "" {
-				if os.Getenv(prov.APIKeyEnv) != "" {
-					keyStatus += " (set)"
-				} else {
-					keyStatus += " (not set)"
-				}
-			} else {
-				keyStatus = "n/a (local)"
-			}
+			keyStatus := prov.KeyStatus()
 
 			table.Append([]string{
 				fmt.Sprintf("#%d", i+1),

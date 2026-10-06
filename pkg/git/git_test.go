@@ -95,3 +95,24 @@ func TestGitSafetyOperations(t *testing.T) {
 		t.Errorf("expected 1 commit since base, got %d", count)
 	}
 }
+
+func TestCheckCleanIgnoresPadrFiles(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	ctx := context.Background()
+	mgr := git.NewManager(repoDir)
+
+	// Add .padr/project.yaml and PADR_ROADMAP.md
+	padrDir := filepath.Join(repoDir, ".padr")
+	_ = os.MkdirAll(padrDir, 0755)
+	_ = os.WriteFile(filepath.Join(padrDir, "project.yaml"), []byte("name: test\n"), 0644)
+	_ = os.WriteFile(filepath.Join(repoDir, "PADR_ROADMAP.md"), []byte("# Roadmap\n- [ ] Task 1\n"), 0644)
+
+	// CheckClean should still consider the repo clean (so PADR can run autonomously)
+	clean, _, err := mgr.CheckClean(ctx)
+	if err != nil || !clean {
+		t.Fatalf("expected CheckClean to ignore .padr and PADR_ROADMAP.md, got clean=%v, err=%v", clean, err)
+	}
+}
+

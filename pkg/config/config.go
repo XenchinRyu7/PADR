@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,12 +31,91 @@ type LimitsConfig struct {
 // ProviderConfig defines model provider credentials and rate limits
 type ProviderConfig struct {
 	ID           string `yaml:"id"`
-	Provider     string `yaml:"provider"`      // groq, google, openrouter, ollama, custom
-	Model        string `yaml:"model"`         // model identifier, e.g. openai/gpt-oss-120b
-	APIKeyEnv    string `yaml:"api_key_env"`   // environment variable name for api key
-	Endpoint     string `yaml:"endpoint"`      // custom endpoint URL for local/custom providers
-	MaxDailyRuns int    `yaml:"max_daily_runs"`// daily budget quota for this provider
+	Provider     string `yaml:"provider"`          // groq, google, openrouter, ollama, custom
+	Model        string `yaml:"model"`             // model identifier, e.g. openai/gpt-oss-120b
+	APIKeyEnv    string `yaml:"api_key_env"`       // environment variable name or literal API key
+	APIKey       string `yaml:"api_key,omitempty"` // optional direct API key
+	Endpoint     string `yaml:"endpoint"`          // custom endpoint URL for local/custom providers
+	MaxDailyRuns int    `yaml:"max_daily_runs"`    // daily budget quota for this provider
 	Enabled      bool   `yaml:"enabled"`
+}
+
+// IsEnvVarName checks whether a string looks like a standard environment variable name (e.g. GROQ_API_KEY)
+func IsEnvVarName(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// Common token/key prefixes or special characters mean it's a literal key, not an env var name
+	if strings.HasPrefix(s, "sk-") || strings.HasPrefix(s, "gsk_") || strings.HasPrefix(s, "AIza") {
+		return false
+	}
+	hasUpper := false
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			return false // lowercase characters -> almost always a literal key or token
+		} else if r >= 'A' && r <= 'Z' {
+			hasUpper = true
+		} else if (r >= '0' && r <= '9') || r == '_' {
+			// standard env var characters
+		} else {
+			return false // dashes, dots, slashes, etc.
+		}
+	}
+	return hasUpper
+}
+
+// ResolveAPIKey returns the actual API key string whether user supplied an env var name or literal key
+func (p *ProviderConfig) ResolveAPIKey() string {
+	if p.APIKey != "" {
+		return strings.TrimSpace(p.APIKey)
+	}
+
+	raw := strings.TrimSpace(p.APIKeyEnv)
+	if raw == "" {
+		return ""
+	}
+
+	// 1. If an environment variable with this name exists and has value, return it
+	if envVal := os.Getenv(raw); envVal != "" {
+		return envVal
+	}
+
+	// 2. If it strictly looks like an env var name (e.g. GROQ_API_KEY), but it is not set in OS
+	if IsEnvVarName(raw) {
+		return ""
+	}
+
+	// 3. Otherwise, treat raw as the literal API key itself (e.g. direct key pasted)
+	return raw
+}
+
+// KeyStatus returns a display-friendly status of the API key configuration
+func (p *ProviderConfig) KeyStatus() string {
+	if strings.ToLower(p.Provider) == "ollama" {
+		return "n/a (local)"
+	}
+	key := p.ResolveAPIKey()
+	raw := strings.TrimSpace(p.APIKeyEnv)
+	if p.APIKey != "" {
+		if len(p.APIKey) > 8 {
+			return fmt.Sprintf("direct (%s...%s)", p.APIKey[:4], p.APIKey[len(p.APIKey)-3:])
+		}
+		return "direct (set)"
+	}
+	if raw == "" {
+		return "(not configured)"
+	}
+	if IsEnvVarName(raw) {
+		if key != "" {
+			return fmt.Sprintf("%s (set)", raw)
+		}
+		return fmt.Sprintf("%s (not set)", raw)
+	}
+	if len(raw) > 8 {
+		return fmt.Sprintf("direct (%s...%s)", raw[:4], raw[len(raw)-3:])
+	}
+	return "direct (set)"
 }
 
 // RoutingConfig defines the model routing and fallback strategy
@@ -171,7 +251,7 @@ func DefaultGlobalConfig() *GlobalConfig {
 			"groq-fast": {
 				ID:           "groq-fast",
 				Provider:     "groq",
-				Model:        "openai/gpt-oss-120b",
+				Model:        "llama-3.3-70b-versatile",
 				APIKeyEnv:    "GROQ_API_KEY",
 				MaxDailyRuns: 3,
 				Enabled:      true,

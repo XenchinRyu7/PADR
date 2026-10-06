@@ -22,6 +22,7 @@ type AgentRunRequest struct {
 	ValidationCommands []string
 	CustomPrompt       string
 	DryRun             bool
+	OnProgress         func(string)
 }
 
 // AgentRunResult captures execution telemetry and output

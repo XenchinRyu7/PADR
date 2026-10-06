@@ -47,15 +47,34 @@ func (m *Manager) IsGitRepo(ctx context.Context) bool {
 	return err == nil && out == "true"
 }
 
-// CheckClean verifies whether working tree has uncommitted or untracked changes
+// CheckClean verifies whether working tree has uncommitted or untracked changes outside of PADR files
 func (m *Manager) CheckClean(ctx context.Context) (bool, string, error) {
 	out, err := m.runGit(ctx, "status", "--porcelain")
 	if err != nil {
 		return false, "", err
 	}
 
-	if strings.TrimSpace(out) != "" {
-		return false, out, ErrDirtyWorkingTree
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var dirtyLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Porcelain format: "XY path/to/file" or "?? path/to/file"
+		parts := strings.Fields(trimmed)
+		if len(parts) >= 2 {
+			filePath := parts[len(parts)-1]
+			normalized := strings.Trim(strings.ReplaceAll(filePath, "\\", "/"), "\"")
+			if strings.HasPrefix(normalized, ".padr") || normalized == "PADR_ROADMAP.md" || strings.HasSuffix(normalized, "/PADR_ROADMAP.md") {
+				continue // Ignore PADR internal config and roadmap file modifications
+			}
+		}
+		dirtyLines = append(dirtyLines, trimmed)
+	}
+
+	if len(dirtyLines) > 0 {
+		return false, strings.Join(dirtyLines, "\n"), ErrDirtyWorkingTree
 	}
 
 	return true, "", nil

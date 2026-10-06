@@ -20,9 +20,11 @@ import (
 
 // RunOptions configures the execution of a project
 type RunOptions struct {
-	EngineOverride string
-	DryRun         bool
-	CustomPrompt   string
+	EngineOverride   string
+	ProviderOverride string
+	DryRun           bool
+	CustomPrompt     string
+	OnProgress       func(string)
 }
 
 // Orchestrator coordinates the end-to-end autonomous workflow for projects
@@ -89,17 +91,36 @@ func (o *Orchestrator) RunProject(ctx context.Context, proj *config.ProjectConfi
 
 	baseCommit, _ := gitMgr.GetHeadCommit(ctx)
 
-	// 3. Resolve Model Candidate with Fallback
-	provider, skips, err := o.Router.ResolveCandidate(ctx)
-	if err != nil {
-		record.Status = "skipped"
-		record.Error = err.Error()
-		record.FinishedAt = time.Now()
-		record.DurationSeconds = int(time.Since(startedAt).Seconds())
-		o.persistRun(record)
-		return record, err
+	// 3. Resolve Model Candidate with Fallback (or Override)
+	var provider *config.ProviderConfig
+	// 3. Resolve Provider Candidate
+	var candidates []*config.ProviderConfig
+	var skips []router.SkipReason
+	if opts.ProviderOverride != "" && opts.ProviderOverride != "Auto (Router Fallback)" {
+		if p, ok := o.GlobalConfig.Providers[opts.ProviderOverride]; ok {
+			candidates = []*config.ProviderConfig{&p}
+		} else {
+			record.Status = "failed"
+			record.Error = fmt.Sprintf("specified provider '%s' not found in configuration", opts.ProviderOverride)
+			record.FinishedAt = time.Now()
+			record.DurationSeconds = int(time.Since(startedAt).Seconds())
+			o.persistRun(record)
+			return record, fmt.Errorf("%s", record.Error)
+		}
+	} else {
+		var err error
+		candidates, skips, err = o.Router.ResolveAllCandidates(ctx)
+		if err != nil {
+			record.Status = "skipped"
+			record.Error = err.Error()
+			record.FinishedAt = time.Now()
+			record.DurationSeconds = int(time.Since(startedAt).Seconds())
+			o.persistRun(record)
+			return record, err
+		}
 	}
 
+	provider = candidates[0]
 	record.Provider = provider.ID
 	record.Model = provider.Model
 
@@ -130,39 +151,62 @@ func (o *Orchestrator) RunProject(ctx context.Context, proj *config.ProjectConfi
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(maxMinutes)*time.Minute)
 	defer cancel()
 
-	// 6. Execute Agent
-	req := agent.AgentRunRequest{
-		ProjectName:        proj.Name,
-		RepoDir:            repoDir,
-		Provider:           *provider,
-		MaxTasks:           proj.Development.MaxTasks,
-		RoadmapFile:        proj.Development.Roadmap,
-		RulesFile:          proj.Development.RulesFile,
-		ArchitectureFile:   proj.Development.ArchitectureFile,
-		ValidationCommands: proj.Validation.Commands,
-		CustomPrompt:       opts.CustomPrompt,
-		DryRun:             opts.DryRun,
+	// 6. Execute Agent (with automatic fallback to next candidate if rate limit or engine error occurs)
+	var agentRes *agent.AgentRunResult
+	var lastErr error
+
+	for candIdx, cand := range candidates {
+		provider = cand
+		record.Provider = cand.ID
+		record.Model = cand.Model
+
+		req := agent.AgentRunRequest{
+			ProjectName:        proj.Name,
+			RepoDir:            repoDir,
+			Provider:           *cand,
+			MaxTasks:           proj.Development.MaxTasks,
+			RoadmapFile:        proj.Development.Roadmap,
+			RulesFile:          proj.Development.RulesFile,
+			ArchitectureFile:   proj.Development.ArchitectureFile,
+			ValidationCommands: proj.Validation.Commands,
+			CustomPrompt:       opts.CustomPrompt,
+			DryRun:             opts.DryRun,
+			OnProgress:         opts.OnProgress,
+		}
+
+		res, aErr := agentEngine.Run(execCtx, req)
+		if aErr == nil && res != nil && res.Success {
+			agentRes = res
+			lastErr = nil
+			break
+		}
+
+		errMsg := ""
+		if aErr != nil {
+			errMsg = aErr.Error()
+		} else if res != nil {
+			errMsg = res.Error
+		}
+		lastErr = fmt.Errorf("%s", errMsg)
+		if res != nil && res.Output != "" {
+			record.LogOutput = res.Output
+		}
+
+		// If more candidates remain and we are in auto router fallback mode, try next candidate
+		if len(candidates) > 1 && candIdx < len(candidates)-1 {
+			fmt.Printf("[Runner] Provider '%s' encountered an issue (%s). Auto-falling back to next provider '%s'...\n",
+				cand.ID, errMsg, candidates[candIdx+1].ID)
+			continue
+		}
 	}
 
-	agentRes, agentErr := agentEngine.Run(execCtx, req)
-	if agentErr != nil || (agentRes != nil && !agentRes.Success) {
-		errMsg := ""
-		if agentErr != nil {
-			errMsg = agentErr.Error()
-		} else if agentRes != nil {
-			errMsg = agentRes.Error
-		}
-
-		// Check if error is rate limit or quota to suggest fallback on next run
+	if lastErr != nil {
 		record.Status = "failed"
-		record.Error = errMsg
-		if agentRes != nil {
-			record.LogOutput = agentRes.Output
-		}
+		record.Error = lastErr.Error()
 		record.FinishedAt = time.Now()
 		record.DurationSeconds = int(time.Since(startedAt).Seconds())
 		o.persistRun(record)
-		return record, fmt.Errorf("agent run failed: %s", errMsg)
+		return record, fmt.Errorf("agent run failed: %w", lastErr)
 	}
 
 	if agentRes != nil {
